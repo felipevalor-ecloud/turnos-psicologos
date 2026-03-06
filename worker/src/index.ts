@@ -10,6 +10,11 @@ import type { Env, AppVariables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
+app.use('*', async (c, next) => {
+  console.log(`[Request] ${c.req.method} ${c.req.url}`);
+  await next();
+});
+
 app.use(
   '*',
   cors({

@@ -60,7 +60,7 @@ holidaysRouter.get('/', authMiddleware, async (c) => {
 
     // 2. Fetch overrides from DB for this psychologist
     const overridesResult = await c.env.DB.prepare(
-        'SELECT date FROM holiday_overrides WHERE psychologist_id = ? AND date LIKE ?'
+        'SELECT "date" FROM holiday_overrides WHERE psychologist_id = ? AND "date" LIKE ?'
     )
         .bind(psychologistId, `${year}-%`)
         .all<{ date: string }>();
@@ -95,7 +95,7 @@ holidaysRouter.post('/override', authMiddleware, async (c) => {
 
     try {
         await c.env.DB.prepare(
-            'INSERT OR IGNORE INTO holiday_overrides (psychologist_id, date) VALUES (?, ?)'
+            'INSERT OR IGNORE INTO holiday_overrides (psychologist_id, "date") VALUES (?, ?)'
         ).bind(psychologistId, date).run();
 
         return c.json({ success: true });
@@ -116,7 +116,7 @@ holidaysRouter.delete('/override/:date', authMiddleware, async (c) => {
 
     try {
         await c.env.DB.prepare(
-            'DELETE FROM holiday_overrides WHERE psychologist_id = ? AND date = ?'
+            'DELETE FROM holiday_overrides WHERE psychologist_id = ? AND "date" = ?'
         ).bind(psychologistId, date).run();
 
         return c.json({ success: true });

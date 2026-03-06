@@ -5,20 +5,20 @@ import type { Env, AppVariables } from '../types';
 
 type SlotBookingRow = {
   id: number;
-  date: string;
-  start_time: string;
-  end_time: string;
-  available: number;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  disponible: number;
   booking_id: number | null;
 };
 
 type BookingRow = {
   id: number;
-  patient_email: string;
-  patient_phone: string;
+  paciente_email: string;
+  paciente_telefono: string;
   slot_id: number;
-  date: string;
-  start_time: string;
+  fecha: string;
+  hora_inicio: string;
 };
 
 const PHONE_RE = /^\+549\d{8,10}$/;
@@ -30,12 +30,12 @@ bookingsRouter.get('/', authMiddleware, async (c) => {
   const psychologistId = c.get('psychologistId');
 
   const result = await c.env.DB.prepare(
-    `SELECT b.id, b.patient_name, b.patient_email, b.patient_phone, b.created_at,
-            s.id as slot_id, s.date, s.start_time, s.end_time
-     FROM bookings b
+    `SELECT b.id, b.paciente_nombre as patient_name, b.paciente_email as patient_email, b.paciente_telefono as patient_phone, b.created_at,
+            s.id as slot_id, s.fecha as date, s.hora_inicio as start_time, s.hora_fin as end_time
+     FROM reservas b
      JOIN slots s ON b.slot_id = s.id
-     WHERE s.psychologist_id = ?
-     ORDER BY s.date, s.start_time`,
+     WHERE s.psicologo_id = ?
+     ORDER BY s.fecha, s.hora_inicio`,
   )
     .bind(psychologistId)
     .all();
@@ -71,9 +71,9 @@ bookingsRouter.post('/', async (c) => {
 
   // Fetch slot with booking status
   const slot = await c.env.DB.prepare(
-    `SELECT s.id, s.date, s.start_time, s.end_time, s.available, b.id as booking_id
+    `SELECT s.id, s.fecha, s.hora_inicio, s.hora_fin, s.disponible, b.id as booking_id
      FROM slots s
-     LEFT JOIN bookings b ON b.slot_id = s.id
+     LEFT JOIN reservas b ON b.slot_id = s.id
      WHERE s.id = ?`,
   )
     .bind(slot_id)
@@ -82,7 +82,7 @@ bookingsRouter.post('/', async (c) => {
   if (!slot) {
     return c.json({ success: false, error: 'Turno no encontrado' }, 404);
   }
-  if (!slot.available || slot.booking_id !== null) {
+  if (!slot.disponible || slot.booking_id !== null) {
     return c.json({ success: false, error: 'El turno no está disponible' }, 409);
   }
 
@@ -99,12 +99,12 @@ bookingsRouter.post('/', async (c) => {
   // Check patient doesn't have an overlapping booking on the same date (unless admin)
   if (!isPsychologist) {
     const overlap = await c.env.DB.prepare(
-      `SELECT b.id FROM bookings b
+      `SELECT b.id FROM reservas b
        JOIN slots s ON b.slot_id = s.id
-       WHERE b.patient_email = ? AND s.date = ?
-       AND NOT (s.end_time <= ? OR s.start_time >= ?)`
+       WHERE b.paciente_email = ? AND s.fecha = ?
+       AND NOT (s.hora_fin <= ? OR s.hora_inicio >= ?)`
     )
-      .bind(patient_email, slot.date, slot.start_time, slot.end_time)
+      .bind(patient_email, slot.fecha, slot.hora_inicio, slot.hora_fin)
       .first();
 
     if (overlap) {
@@ -112,11 +112,11 @@ bookingsRouter.post('/', async (c) => {
     }
   }
 
-  // Atomically set available=0 and insert booking using D1 batch
+  // Atomically set disponible=0 and insert booking using D1 batch
   const results = await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE slots SET available = 0 WHERE id = ? AND available = 1').bind(slot_id),
+    c.env.DB.prepare('UPDATE slots SET disponible = 0 WHERE id = ? AND disponible = 1').bind(slot_id),
     c.env.DB.prepare(
-      'INSERT INTO bookings (slot_id, patient_name, patient_email, patient_phone) VALUES (?, ?, ?, ?)',
+      'INSERT INTO reservas (slot_id, paciente_nombre, paciente_email, paciente_telefono) VALUES (?, ?, ?, ?)',
     ).bind(slot_id, patient_name, patient_email, patient_phone),
   ]);
 
@@ -132,7 +132,7 @@ bookingsRouter.post('/', async (c) => {
       success: true,
       data: {
         id: bookingId,
-        slot: { date: slot.date, start_time: slot.start_time, end_time: slot.end_time },
+        slot: { date: slot.fecha, start_time: slot.hora_inicio, end_time: slot.hora_fin },
         patient: { name: patient_name, email: patient_email, phone: patient_phone },
       },
     },
@@ -155,13 +155,13 @@ bookingsRouter.post('/search', async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `SELECT b.id, b.patient_name, b.patient_email, b.patient_phone, b.created_at, b.recurring_booking_id,
-            s.id as slot_id, s.date, s.start_time, s.end_time
-     FROM bookings b
+    `SELECT b.id, b.paciente_nombre as patient_name, b.paciente_email as patient_email, b.paciente_telefono as patient_phone, b.created_at, b.recurring_booking_id,
+            s.id as slot_id, s.fecha as date, s.hora_inicio as start_time, s.hora_fin as end_time
+     FROM reservas b
      JOIN slots s ON b.slot_id = s.id
-     WHERE b.patient_email = ? AND b.patient_phone = ?
-     AND s.date >= date('now')
-     ORDER BY s.date, s.start_time`,
+     WHERE b.paciente_email = ? AND b.paciente_telefono = ?
+     AND s.fecha >= date('now')
+     ORDER BY s.fecha, s.hora_inicio`,
   )
     .bind(email, phone)
     .all();
@@ -186,25 +186,25 @@ bookingsRouter.patch('/:id', async (c) => {
 
   // 1. Validate old booking
   const oldBooking = await c.env.DB.prepare(
-    `SELECT b.id, b.patient_email, b.patient_phone, b.patient_name, b.slot_id, b.recurring_booking_id
-     FROM bookings b
+    `SELECT b.id, b.paciente_email, b.paciente_telefono, b.paciente_nombre, b.slot_id, b.recurring_booking_id
+     FROM reservas b
      WHERE b.id = ?`,
   )
     .bind(id)
-    .first<BookingRow & { patient_name: string; recurring_booking_id: number | null }>();
+    .first<BookingRow & { paciente_nombre: string; recurring_booking_id: number | null }>();
 
   if (!oldBooking) {
     return c.json({ success: false, error: 'Reserva no encontrada' }, 404);
   }
-  if (oldBooking.patient_email !== email || oldBooking.patient_phone !== phone) {
+  if (oldBooking.paciente_email !== email || oldBooking.paciente_telefono !== phone) {
     return c.json({ success: false, error: 'Datos de verificación incorrectos' }, 403);
   }
 
   // 2. Validate new slot
   const newSlot = await c.env.DB.prepare(
-    `SELECT s.id, s.date, s.start_time, s.end_time, s.available, b.id as booking_id
+    `SELECT s.id, s.fecha, s.hora_inicio, s.hora_fin, s.disponible, b.id as booking_id
      FROM slots s
-     LEFT JOIN bookings b ON b.slot_id = s.id
+     LEFT JOIN reservas b ON b.slot_id = s.id
      WHERE s.id = ?`,
   )
     .bind(new_slot_id)
@@ -213,18 +213,18 @@ bookingsRouter.patch('/:id', async (c) => {
   if (!newSlot) {
     return c.json({ success: false, error: 'El nuevo turno no existe' }, 404);
   }
-  if (!newSlot.available || newSlot.booking_id !== null) {
+  if (!newSlot.disponible || newSlot.booking_id !== null) {
     return c.json({ success: false, error: 'Este turno ya no está disponible, por favor elegí otro' }, 409);
   }
 
   // 3. Check for conflicts with patient's other bookings (excluding the one being rescheduled)
   const conflict = await c.env.DB.prepare(
-    `SELECT b.id FROM bookings b
+    `SELECT b.id FROM reservas b
      JOIN slots s ON b.slot_id = s.id
-     WHERE b.patient_email = ? AND s.date = ? AND b.id != ?
-     AND NOT (s.end_time <= ? OR s.start_time >= ?)`,
+     WHERE b.paciente_email = ? AND s.fecha = ? AND b.id != ?
+     AND NOT (s.hora_fin <= ? OR s.hora_inicio >= ?)`,
   )
-    .bind(email, newSlot.date, id, newSlot.start_time, newSlot.end_time)
+    .bind(email, newSlot.fecha, id, newSlot.hora_inicio, newSlot.hora_fin)
     .first();
 
   if (conflict) {
@@ -236,15 +236,15 @@ bookingsRouter.patch('/:id', async (c) => {
   try {
     const results = await c.env.DB.batch([
       // Free old slot
-      c.env.DB.prepare('UPDATE slots SET available = 1 WHERE id = ?').bind(oldBooking.slot_id),
+      c.env.DB.prepare('UPDATE slots SET disponible = 1 WHERE id = ?').bind(oldBooking.slot_id),
       // Delete old booking
-      c.env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(id),
+      c.env.DB.prepare('DELETE FROM reservas WHERE id = ?').bind(id),
       // Book new slot (with race condition check)
-      c.env.DB.prepare('UPDATE slots SET available = 0 WHERE id = ? AND available = 1').bind(new_slot_id),
+      c.env.DB.prepare('UPDATE slots SET disponible = 0 WHERE id = ? AND disponible = 1').bind(new_slot_id),
       // Create new booking (recurring_booking_id is NULL by default in this query)
       c.env.DB.prepare(
-        'INSERT INTO bookings (slot_id, patient_name, patient_email, patient_phone, recurring_booking_id) VALUES (?, ?, ?, ?, NULL)',
-      ).bind(new_slot_id, oldBooking.patient_name, email, phone),
+        'INSERT INTO reservas (slot_id, paciente_nombre, paciente_email, paciente_telefono, recurring_booking_id) VALUES (?, ?, ?, ?, NULL)',
+      ).bind(new_slot_id, oldBooking.paciente_nombre, email, phone),
     ]);
 
     if (results[2].meta.changes === 0) {
@@ -256,7 +256,7 @@ bookingsRouter.patch('/:id', async (c) => {
       success: true,
       data: {
         id: newBookingId,
-        slot: { date: newSlot.date, start_time: newSlot.start_time, end_time: newSlot.end_time },
+        slot: { date: newSlot.fecha, start_time: newSlot.hora_inicio, end_time: newSlot.hora_fin },
       }
     });
   } catch (e) {
@@ -281,8 +281,8 @@ bookingsRouter.delete('/:id', async (c) => {
   }
 
   const booking = await c.env.DB.prepare(
-    `SELECT b.id, b.patient_email, b.patient_phone, b.slot_id, s.date, s.start_time
-     FROM bookings b
+    `SELECT b.id, b.paciente_email, b.paciente_telefono, b.slot_id, s.fecha, s.hora_inicio
+     FROM reservas b
      JOIN slots s ON b.slot_id = s.id
      WHERE b.id = ?`,
   )
@@ -292,7 +292,7 @@ bookingsRouter.delete('/:id', async (c) => {
   if (!booking) {
     return c.json({ success: false, error: 'Reserva no encontrada' }, 404);
   }
-  if (booking.patient_email !== email || booking.patient_phone !== phone) {
+  if (booking.paciente_email !== email || booking.paciente_telefono !== phone) {
     return c.json({ success: false, error: 'Datos de verificación incorrectos' }, 403);
   }
 
@@ -303,8 +303,8 @@ bookingsRouter.delete('/:id', async (c) => {
 
   // Delete booking and restore slot
   await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(id),
-    c.env.DB.prepare('UPDATE slots SET available = 1 WHERE id = ?').bind(booking.slot_id),
+    c.env.DB.prepare('DELETE FROM reservas WHERE id = ?').bind(id),
+    c.env.DB.prepare('UPDATE slots SET disponible = 1 WHERE id = ?').bind(booking.slot_id),
   ]);
 
   return c.json({ success: true });

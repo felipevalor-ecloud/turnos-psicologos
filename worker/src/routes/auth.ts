@@ -19,7 +19,7 @@ authRouter.get('/me', authMiddleware, async (c) => {
   const psychologistId = c.get('psychologistId');
 
   const psych = await c.env.DB.prepare(
-    'SELECT id, name, email, session_duration_minutes FROM psychologists WHERE id = ?',
+    'SELECT id, nombre as name, email, session_duration_minutes FROM psicologos WHERE id = ?',
   )
     .bind(psychologistId)
     .first<Omit<PsychologistRow, 'password_hash'>>();
@@ -53,14 +53,14 @@ authRouter.patch('/me', authMiddleware, async (c) => {
     }
 
     await c.env.DB.prepare(
-      'UPDATE psychologists SET session_duration_minutes = ? WHERE id = ?',
+      'UPDATE psicologos SET session_duration_minutes = ? WHERE id = ?',
     )
       .bind(session_duration_minutes, psychologistId)
       .run();
   }
 
   const psych = await c.env.DB.prepare(
-    'SELECT id, name, email, session_duration_minutes FROM psychologists WHERE id = ?',
+    'SELECT id, nombre as name, email, session_duration_minutes FROM psicologos WHERE id = ?',
   )
     .bind(psychologistId)
     .first<Omit<PsychologistRow, 'password_hash'>>();
@@ -83,7 +83,7 @@ authRouter.post('/login', async (c) => {
   }
 
   const psych = await c.env.DB.prepare(
-    'SELECT id, name, email, password_hash, session_duration_minutes FROM psychologists WHERE email = ?',
+    'SELECT id, nombre as name, email, password_hash, session_duration_minutes FROM psicologos WHERE email = ?',
   )
     .bind(email)
     .first<PsychologistRow>();
@@ -107,9 +107,9 @@ authRouter.post('/login', async (c) => {
     success: true,
     data: {
       token,
-      psychologist: { 
-        id: psych.id, 
-        name: psych.name, 
+      psychologist: {
+        id: psych.id,
+        name: psych.name,
         email: psych.email,
         session_duration_minutes: psych.session_duration_minutes
       },

@@ -87,8 +87,8 @@ async function generateSlots(
     const overlap = await db
       .prepare(
         `SELECT COUNT(*) as count FROM slots
-         WHERE psychologist_id = ? AND date = ?
-         AND NOT (end_time <= ? OR start_time >= ?)`,
+         WHERE psicologo_id = ? AND fecha = ?
+         AND NOT (hora_fin <= ? OR hora_inicio >= ?)`,
       )
       .bind(psychologistId, current, time, end_time)
       .first<OverlapRow>();
@@ -97,8 +97,8 @@ async function generateSlots(
       try {
         const slotResult = await db
           .prepare(
-            `INSERT INTO slots (psychologist_id, date, start_time, end_time, recurring_booking_id)
-             VALUES (?, ?, ?, ?, ?)`,
+            `INSERT INTO slots (psicologo_id, fecha, hora_inicio, hora_fin, disponible, recurring_booking_id)
+             VALUES (?, ?, ?, ?, 0, ?)`,
           )
           .bind(psychologistId, current, time, end_time, recurringId)
           .run();
@@ -107,17 +107,14 @@ async function generateSlots(
 
         await db
           .prepare(
-            `INSERT INTO bookings (slot_id, patient_name, patient_email, patient_phone, recurring_booking_id)
+            `INSERT INTO reservas (slot_id, paciente_nombre, paciente_email, paciente_telefono, recurring_booking_id)
              VALUES (?, ?, ?, ?, ?)`,
           )
           .bind(slotId, patientName, patientEmail, patientPhone, recurringId)
           .run();
 
-        // Mark the slot as unavailable since it's booked
-        await db
-          .prepare('UPDATE slots SET available = 0 WHERE id = ?')
-          .bind(slotId)
-          .run();
+        // Mark the slot as unavailable since it's booked (already set to 0 above)
+        // No separate update needed since we insert with disponible = 0
 
         created++;
       } catch {
@@ -186,7 +183,7 @@ recurringRouter.post('/', authMiddleware, async (c) => {
   const recurringId = recurringResult.meta.last_row_id;
   const toDate = addMonths(todayStr(), 3);
 
-  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?')
     .bind(psychologistId)
     .first<ConfigRow>();
   const sessionDuration = config?.session_duration_minutes ?? 45;
@@ -218,9 +215,9 @@ recurringRouter.get('/', authMiddleware, async (c) => {
   const result = await c.env.DB.prepare(
     `SELECT rb.id, rb.patient_name, rb.patient_email, rb.patient_phone,
             rb.frequency_weeks, rb.start_date, rb.time, rb.active, rb.created_at,
-            MIN(s.date) as next_appointment
+            MIN(s.fecha) as next_appointment
      FROM recurring_bookings rb
-     LEFT JOIN slots s ON s.recurring_booking_id = rb.id AND s.date >= date('now')
+     LEFT JOIN slots s ON s.recurring_booking_id = rb.id AND s.fecha >= date('now')
      WHERE rb.psychologist_id = ? AND rb.active = 1
      GROUP BY rb.id
      ORDER BY rb.start_date`,
@@ -282,7 +279,7 @@ recurringRouter.delete('/:id', async (c) => {
 
   // Get future slot IDs linked to this recurrence
   const futureSlots = await c.env.DB.prepare(
-    `SELECT id FROM slots WHERE recurring_booking_id = ? AND date > ?`,
+    `SELECT id FROM slots WHERE recurring_booking_id = ? AND fecha > ?`,
   )
     .bind(id, today)
     .all<SlotIdRow>();
@@ -295,7 +292,7 @@ recurringRouter.delete('/:id', async (c) => {
     for (let i = 0; i < slotIds.length; i += batchSize) {
       const chunk = slotIds.slice(i, i + batchSize);
       const placeholders = chunk.map(() => '?').join(', ');
-      await c.env.DB.prepare(`DELETE FROM bookings WHERE slot_id IN (${placeholders})`)
+      await c.env.DB.prepare(`DELETE FROM reservas WHERE slot_id IN (${placeholders})`)
         .bind(...chunk)
         .run();
       await c.env.DB.prepare(`DELETE FROM slots WHERE id IN (${placeholders})`)
@@ -336,7 +333,7 @@ recurringRouter.patch('/:id/reschedule-from', async (c) => {
   }
 
   // 2. Get session duration to calculate new end_time
-  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?')
     .bind(recurring.psychologist_id)
     .first<ConfigRow>();
   const sessionDuration = config?.session_duration_minutes ?? 45;
@@ -344,9 +341,9 @@ recurringRouter.patch('/:id/reschedule-from', async (c) => {
 
   // 3. Find all future slots in the series (date >= from_date)
   const futureSlots = await c.env.DB.prepare(
-    `SELECT s.id, s.date FROM slots s
-     WHERE s.recurring_booking_id = ? AND s.date >= ?
-     ORDER BY s.date`
+    `SELECT s.id, s.fecha as date FROM slots s
+     WHERE s.recurring_booking_id = ? AND s.fecha >= ?
+     ORDER BY s.fecha`
   )
     .bind(id, from_date)
     .all<{ id: number; date: string }>();
@@ -362,8 +359,8 @@ recurringRouter.patch('/:id/reschedule-from', async (c) => {
     // Check for conflicts at the new time on the same date (excluding the slot itself)
     const conflict = await c.env.DB.prepare(
       `SELECT id FROM slots
-       WHERE psychologist_id = ? AND date = ? AND id NOT IN (SELECT id FROM slots WHERE recurring_booking_id = ?)
-       AND NOT (end_time <= ? OR start_time >= ?)`
+       WHERE psicologo_id = ? AND fecha = ? AND id NOT IN (SELECT id FROM slots WHERE recurring_booking_id = ?)
+       AND NOT (hora_fin <= ? OR hora_inicio >= ?)`
     )
       .bind(recurring.psychologist_id, slot.date, id, new_time, newEndTime)
       .first();
@@ -392,7 +389,7 @@ recurringRouter.patch('/:id/reschedule-from', async (c) => {
       c.env.DB.prepare('UPDATE slots SET available = 1, recurring_booking_id = NULL WHERE id = ?').bind(slot.id),
       c.env.DB.prepare('DELETE FROM bookings WHERE slot_id = ?').bind(slot.id),
       c.env.DB.prepare(
-        'INSERT INTO slots (psychologist_id, date, start_time, end_time, available, recurring_booking_id) VALUES (?, ?, ?, ?, 0, ?)'
+        'INSERT INTO slots (psychologist_id, "date", start_time, end_time, available, recurring_booking_id) VALUES (?, ?, ?, ?, 0, ?)'
       ).bind(recurring.psychologist_id, slot.date, new_time, newEndTime, id)
     );
     // We'll need the new slot ID for the booking. This is tricky in batch if we have many.
@@ -406,8 +403,8 @@ recurringRouter.patch('/:id/reschedule-from', async (c) => {
   for (const slot of futureSlots.results) {
     const conflict = await c.env.DB.prepare(
       `SELECT id FROM slots
-       WHERE psychologist_id = ? AND date = ? AND id != ?
-       AND NOT (end_time <= ? OR start_time >= ?)`
+       WHERE psicologo_id = ? AND fecha = ? AND id != ?
+       AND NOT (hora_fin <= ? OR hora_inicio >= ?)`
     )
       .bind(recurring.psychologist_id, slot.date, slot.id, new_time, newEndTime)
       .first();
@@ -440,7 +437,7 @@ recurringRouter.post('/extend', authMiddleware, async (c) => {
   const recurrences = await c.env.DB.prepare(
     `SELECT rb.id, rb.patient_name, rb.patient_email, rb.patient_phone,
             rb.frequency_weeks, rb.start_date, rb.time,
-            MAX(s.date) as last_generated
+            MAX(s.fecha) as last_generated
      FROM recurring_bookings rb
      LEFT JOIN slots s ON s.recurring_booking_id = rb.id
      WHERE rb.psychologist_id = ? AND rb.active = 1
@@ -449,7 +446,7 @@ recurringRouter.post('/extend', authMiddleware, async (c) => {
     .bind(psychologistId)
     .all<RecurringRow & { last_generated: string | null }>();
 
-  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?')
     .bind(psychologistId)
     .first<ConfigRow>();
   const sessionDuration = config?.session_duration_minutes ?? 45;

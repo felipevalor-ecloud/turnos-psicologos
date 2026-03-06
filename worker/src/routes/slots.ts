@@ -5,10 +5,10 @@ import { fetchArgentineHolidays } from './holidays';
 
 type SlotRow = {
   id: number;
-  date: string;
-  start_time: string;
-  end_time: string;
-  available: number;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  disponible: number;
   booking_id: number | null;
 };
 
@@ -49,7 +49,7 @@ export async function generateSlotsForDate(db: D1Database, date: string, psychol
   let generate = true;
   if (isHoliday) {
     const override = await db.prepare(
-      'SELECT id FROM holiday_overrides WHERE psychologist_id = ? AND "date" = ?'
+      'SELECT id FROM holiday_overrides WHERE psychologist_id = ? AND date = ?'
     ).bind(psychologistId, date).first();
     if (!override) {
       generate = false; // it is a holiday without override, do not generate
@@ -74,15 +74,15 @@ export async function generateSlotsForDate(db: D1Database, date: string, psychol
     return; // Nothing to generate
   }
 
-  const psych = await db.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?').bind(psychologistId).first<{ session_duration_minutes: number }>();
+  const psych = await db.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?').bind(psychologistId).first<{ session_duration_minutes: number }>();
   const sessionDuration = psych?.session_duration_minutes || 45;
 
   const existingSlotsResult = await db.prepare(
-    'SELECT id, "date", start_time, end_time, available FROM slots WHERE psychologist_id = ? AND "date" = ? ORDER BY start_time'
+    'SELECT id, fecha, hora_inicio, hora_fin, disponible FROM slots WHERE psicologo_id = ? AND fecha = ? ORDER BY hora_inicio'
   ).bind(psychologistId, date).all<SlotRow>();
 
   const existingSlots = existingSlotsResult.results;
-  const existingTimes = new Set(existingSlots.map(s => s.start_time));
+  const existingTimes = new Set(existingSlots.map(s => s.hora_inicio));
 
   const toInsert: { start: string, end: string }[] = [];
 
@@ -99,11 +99,11 @@ export async function generateSlotsForDate(db: D1Database, date: string, psychol
   for (const slot of toInsert) {
     try {
       await db.prepare(
-        'INSERT INTO slots (psychologist_id, "date", start_time, end_time, available) VALUES (?, ?, ?, ?, 1)'
+        'INSERT INTO slots (psicologo_id, fecha, hora_inicio, hora_fin, disponible) VALUES (?, ?, ?, ?, 1)'
       ).bind(psychologistId, date, slot.start, slot.end).run();
     } catch (e) {
       // Ignore unique constraint failures for concurrent requests
-      console.error(e);
+      console.error('Error inserting slot:', e);
     }
   }
 }
@@ -118,7 +118,7 @@ slotsRouter.get('/', async (c) => {
   }
 
   // We assume there's one primary psychologist configuration
-  const psych = await c.env.DB.prepare('SELECT id, session_duration_minutes FROM psychologists LIMIT 1').first<{ id: number; session_duration_minutes: number }>();
+  const psych = await c.env.DB.prepare('SELECT id, session_duration_minutes FROM psicologos LIMIT 1').first<{ id: number; session_duration_minutes: number }>();
   if (!psych) {
     return c.json({ success: true, data: [] });
   }
@@ -127,20 +127,20 @@ slotsRouter.get('/', async (c) => {
   await generateSlotsForDate(c.env.DB, date, psychologistId);
 
   const existingSlotsResult = await c.env.DB.prepare(
-    'SELECT id, "date", start_time, end_time, available FROM slots WHERE psychologist_id = ? AND "date" = ? ORDER BY start_time'
+    'SELECT id, fecha, hora_inicio, hora_fin, disponible FROM slots WHERE psicologo_id = ? AND fecha = ? ORDER BY hora_inicio'
   ).bind(psychologistId, date).all<SlotRow>();
 
   const availableSlots = existingSlotsResult.results
-    .filter(s => s.available === 1)
-    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    .filter(s => Number(s.disponible) === 1)
+    .sort((a, b) => a.hora_inicio.localeCompare(b.hora_inicio));
 
   return c.json({
     success: true,
     data: availableSlots.map(s => ({
       id: s.id,
-      date: s.date,
-      start_time: s.start_time,
-      end_time: s.end_time
+      date: s.fecha,
+      start_time: s.hora_inicio,
+      end_time: s.hora_fin
     }))
   });
 });
@@ -156,28 +156,28 @@ slotsRouter.get('/all', authMiddleware, async (c) => {
   }
 
   let query = `
-    SELECT s.id, s."date", s.start_time, s.end_time, s.available, s.created_at, s.recurring_booking_id,
-           b.id as booking_id, b.patient_name, b.patient_email, b.patient_phone
+    SELECT s.id, s.fecha as date, s.hora_inicio as start_time, s.hora_fin as end_time, s.disponible as available, s.created_at, s.recurring_booking_id,
+           b.id as booking_id, b.paciente_nombre as patient_name, b.paciente_email as patient_email, b.paciente_telefono as patient_phone
     FROM slots s
-    LEFT JOIN bookings b ON b.slot_id = s.id
-    WHERE s.psychologist_id = ?
+    LEFT JOIN reservas b ON b.slot_id = s.id
+    WHERE s.psicologo_id = ?
   `;
   const params: (string | number)[] = [psychologistId];
 
   if (date) {
-    query += ' AND s."date" = ?';
+    query += ' AND s.fecha = ?';
     params.push(date);
   }
 
   if (status === 'available') {
-    query += ' AND s.available = 1 AND b.id IS NULL';
+    query += ' AND s.disponible = 1 AND b.id IS NULL';
   } else if (status === 'booked') {
     query += ' AND b.id IS NOT NULL';
   } else if (status === 'blocked') {
-    query += ' AND s.available = 0 AND b.id IS NULL';
+    query += ' AND s.disponible = 0 AND b.id IS NULL';
   }
 
-  query += ' ORDER BY s."date", s.start_time';
+  query += ' ORDER BY s.fecha, s.hora_inicio';
 
   const result = await c.env.DB.prepare(query).bind(...params).all();
   return c.json({ success: true, data: result.results });
@@ -209,7 +209,7 @@ slotsRouter.post('/', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'No se puede crear un turno en una fecha pasada' }, 400);
   }
 
-  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?')
     .bind(psychologistId)
     .first<ConfigRow>();
   const duration = config?.session_duration_minutes ?? 45;
@@ -218,8 +218,8 @@ slotsRouter.post('/', authMiddleware, async (c) => {
 
   const overlap = await c.env.DB.prepare(
     `SELECT COUNT(*) as count FROM slots
-     WHERE psychologist_id = ? AND "date" = ?
-     AND NOT (end_time <= ? OR start_time >= ?)`,
+     WHERE psicologo_id = ? AND fecha = ?
+     AND NOT (hora_fin <= ? OR hora_inicio >= ?)`,
   )
     .bind(psychologistId, date, start_time, end_time)
     .first<OverlapRow>();
@@ -229,13 +229,13 @@ slotsRouter.post('/', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    'INSERT INTO slots (psychologist_id, "date", start_time, end_time) VALUES (?, ?, ?, ?)',
+    'INSERT INTO slots (psicologo_id, fecha, hora_inicio, hora_fin) VALUES (?, ?, ?, ?)',
   )
     .bind(psychologistId, date, start_time, end_time)
     .run();
 
   return c.json(
-    { success: true, data: { id: result.meta.last_row_id, "date": date, start_time, end_time, available: 1 } },
+    { success: true, data: { id: result.meta.last_row_id, date, start_time, end_time, available: 1 } },
     201,
   );
 });
@@ -272,7 +272,7 @@ slotsRouter.post('/batch', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'end_date debe ser posterior a start_date' }, 400);
   }
 
-  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psicologos WHERE id = ?')
     .bind(psychologistId)
     .first<ConfigRow>();
   const duration = config?.session_duration_minutes ?? 45;
@@ -291,8 +291,8 @@ slotsRouter.post('/batch', authMiddleware, async (c) => {
     if (days_of_week.includes(dayOfWeek)) {
       const overlap = await c.env.DB.prepare(
         `SELECT COUNT(*) as count FROM slots
-         WHERE psychologist_id = ? AND "date" = ?
-         AND NOT (end_time <= ? OR start_time >= ?)`,
+         WHERE psicologo_id = ? AND fecha = ?
+         AND NOT (hora_fin <= ? OR hora_inicio >= ?)`,
       )
         .bind(psychologistId, dateStr, start_time, end_time)
         .first<OverlapRow>();
@@ -300,7 +300,7 @@ slotsRouter.post('/batch', authMiddleware, async (c) => {
       if (!overlap || overlap.count === 0) {
         try {
           await c.env.DB.prepare(
-            'INSERT INTO slots (psychologist_id, "date", start_time, end_time) VALUES (?, ?, ?, ?)',
+            'INSERT INTO slots (psicologo_id, fecha, hora_inicio, hora_fin) VALUES (?, ?, ?, ?)',
           )
             .bind(psychologistId, dateStr, start_time, end_time)
             .run();
@@ -340,13 +340,13 @@ slotsRouter.patch('/:id', authMiddleware, async (c) => {
   }
 
   const slot = await c.env.DB.prepare(
-    `SELECT s.id, s.available, b.id as booking_id
+    `SELECT s.id, s.disponible as available, b.id as booking_id
      FROM slots s
-     LEFT JOIN bookings b ON b.slot_id = s.id
-     WHERE s.id = ? AND s.psychologist_id = ?`,
+     LEFT JOIN reservas b ON b.slot_id = s.id
+     WHERE s.id = ? AND s.psicologo_id = ?`,
   )
     .bind(id, psychologistId)
-    .first<SlotRow>();
+    .first<SlotRow & { available: number }>();
 
   if (!slot) {
     return c.json({ success: false, error: 'Turno no encontrado' }, 404);
@@ -355,7 +355,7 @@ slotsRouter.patch('/:id', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'No se puede bloquear un turno con reserva activa' }, 409);
   }
 
-  await c.env.DB.prepare('UPDATE slots SET available = ? WHERE id = ?').bind(available, id).run();
+  await c.env.DB.prepare('UPDATE slots SET disponible = ? WHERE id = ?').bind(available, id).run();
 
   return c.json({ success: true });
 });
@@ -368,8 +368,8 @@ slotsRouter.delete('/:id', authMiddleware, async (c) => {
   const slot = await c.env.DB.prepare(
     `SELECT s.id, b.id as booking_id
      FROM slots s
-     LEFT JOIN bookings b ON b.slot_id = s.id
-     WHERE s.id = ? AND s.psychologist_id = ?`,
+     LEFT JOIN reservas b ON b.slot_id = s.id
+     WHERE s.id = ? AND s.psicologo_id = ?`,
   )
     .bind(id, psychologistId)
     .first<SlotRow>();
@@ -381,8 +381,8 @@ slotsRouter.delete('/:id', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'No se puede eliminar un turno con reserva activa' }, 409);
   }
 
-  // Instead of DELETE, we UPDATE available = 0 to keep the slot blocked
-  await c.env.DB.prepare('UPDATE slots SET available = 0 WHERE id = ?').bind(id).run();
+  // Instead of DELETE, we UPDATE disponible = 0 to keep the slot blocked
+  await c.env.DB.prepare('UPDATE slots SET disponible = 0 WHERE id = ?').bind(id).run();
 
   return c.json({ success: true });
 });
