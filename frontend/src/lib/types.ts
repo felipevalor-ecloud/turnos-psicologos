@@ -15,6 +15,19 @@ export interface SlotWithBooking extends Slot {
   created_at: string;
 }
 
+export interface BookingWithSlot {
+  id: number;
+  slot_id: number;
+  patient_name: string;
+  patient_email: string;
+  patient_phone: string;
+  created_at: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  recurring_booking_id: number | null;
+}
+
 export interface RecurringBooking {
   id: number;
   psychologist_id: number;
@@ -29,18 +42,6 @@ export interface RecurringBooking {
   next_appointment: string | null;
 }
 
-export interface BookingWithSlot {
-  id: number;
-  slot_id: number;
-  patient_name: string;
-  patient_email: string;
-  patient_phone: string;
-  created_at: string;
-  date: string;
-  start_time: string;
-  end_time: string;
-}
-
 export interface BookingResult {
   id: number;
   slot: { date: string; start_time: string; end_time: string };
@@ -52,4 +53,17 @@ export interface Psychologist {
   name: string;
   email: string;
   session_duration_minutes: number;
+}
+
+export interface WeeklyDaySchedule {
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  active: number;
+}
+
+export interface Holiday {
+  date: string;
+  localName: string;
+  overridden: boolean;
 }

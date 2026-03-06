@@ -1,4 +1,4 @@
-import type { Slot, SlotWithBooking, BookingWithSlot, BookingResult, RecurringBooking } from './types';
+import type { Slot, SlotWithBooking, BookingWithSlot, BookingResult, RecurringBooking, WeeklyDaySchedule, Holiday } from './types';
 
 export type ApiResponse<T = void> = {
   success: boolean;
@@ -39,6 +39,8 @@ export const login = (email: string, password: string) =>
 
 export const apiLogout = () => request('/auth/logout', { method: 'POST' });
 
+// ── Profile & Auth ────────────────────────────────────────────────────────────
+
 export const getProfile = () => request<{ id: number; name: string; email: string; session_duration_minutes: number; }>('/auth/me');
 
 export const updateProfile = (data: { session_duration_minutes: number }) =>
@@ -46,6 +48,27 @@ export const updateProfile = (data: { session_duration_minutes: number }) =>
     method: 'PATCH',
     body: JSON.stringify(data)
   });
+
+// ── Schedule & Holidays ───────────────────────────────────────────────────────
+
+export const getSchedule = () => request<WeeklyDaySchedule[]>('/schedule');
+
+export const updateSchedule = (schedule: WeeklyDaySchedule[]) =>
+  request('/schedule', {
+    method: 'PUT',
+    body: JSON.stringify({ schedule })
+  });
+
+export const getHolidays = (year: number) => request<Holiday[]>(`/holidays?year=${year}`);
+
+export const addHolidayOverride = (date: string) =>
+  request('/holidays/override', {
+    method: 'POST',
+    body: JSON.stringify({ date })
+  });
+
+export const removeHolidayOverride = (date: string) =>
+  request(`/holidays/override/${date}`, { method: 'DELETE' });
 
 // ── Slots (public) ────────────────────────────────────────────────────────────
 
@@ -101,6 +124,12 @@ export const cancelBooking = (id: number, email: string, phone: string) =>
     body: JSON.stringify({ email, phone }),
   });
 
+export const rescheduleBooking = (id: number, data: { email: string; phone: string; new_slot_id: number }) =>
+  request<BookingResult>(`/bookings/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+
 // ── Bookings (admin) ──────────────────────────────────────────────────────────
 
 export const getBookings = () => request<BookingWithSlot[]>('/bookings');
@@ -122,8 +151,17 @@ export const createRecurring = (data: {
     { method: 'POST', body: JSON.stringify(data) },
   );
 
-export const cancelRecurring = (id: number) =>
-  request<{ slots_deleted: number }>(`/recurring/${id}`, { method: 'DELETE' });
+export const cancelRecurring = (id: number, email?: string, phone?: string) =>
+  request<{ slots_deleted: number }>(`/recurring/${id}`, {
+    method: 'DELETE',
+    body: email && phone ? JSON.stringify({ email, phone }) : undefined,
+  });
+
+export const rescheduleRecurring = (id: number, data: { email: string; phone: string; from_date: string; new_time: string }) =>
+  request<{ rescheduled_count: number }>(`/recurring/${id}/reschedule-from`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 
 export const extendRecurring = () =>
   request<{ slots_created: number; slots_skipped: number }>('/recurring/extend', { method: 'POST' });

@@ -155,7 +155,7 @@ bookingsRouter.post('/search', async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `SELECT b.id, b.patient_name, b.patient_email, b.patient_phone, b.created_at,
+    `SELECT b.id, b.patient_name, b.patient_email, b.patient_phone, b.created_at, b.recurring_booking_id,
             s.id as slot_id, s.date, s.start_time, s.end_time
      FROM bookings b
      JOIN slots s ON b.slot_id = s.id
@@ -167,6 +167,101 @@ bookingsRouter.post('/search', async (c) => {
     .all();
 
   return c.json({ success: true, data: result.results });
+});
+
+// PATCH /api/bookings/:id — reschedule one-off or single recurring instance
+bookingsRouter.patch('/:id', async (c) => {
+  const id = Number(c.req.param('id'));
+  let body: { email?: string; phone?: string; new_slot_id?: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ success: false, error: 'Cuerpo JSON inválido' }, 400);
+  }
+
+  const { email, phone, new_slot_id } = body;
+  if (!email || !phone || !new_slot_id) {
+    return c.json({ success: false, error: 'Email, teléfono y nuevo turno son requeridos' }, 400);
+  }
+
+  // 1. Validate old booking
+  const oldBooking = await c.env.DB.prepare(
+    `SELECT b.id, b.patient_email, b.patient_phone, b.patient_name, b.slot_id, b.recurring_booking_id
+     FROM bookings b
+     WHERE b.id = ?`,
+  )
+    .bind(id)
+    .first<BookingRow & { patient_name: string; recurring_booking_id: number | null }>();
+
+  if (!oldBooking) {
+    return c.json({ success: false, error: 'Reserva no encontrada' }, 404);
+  }
+  if (oldBooking.patient_email !== email || oldBooking.patient_phone !== phone) {
+    return c.json({ success: false, error: 'Datos de verificación incorrectos' }, 403);
+  }
+
+  // 2. Validate new slot
+  const newSlot = await c.env.DB.prepare(
+    `SELECT s.id, s.date, s.start_time, s.end_time, s.available, b.id as booking_id
+     FROM slots s
+     LEFT JOIN bookings b ON b.slot_id = s.id
+     WHERE s.id = ?`,
+  )
+    .bind(new_slot_id)
+    .first<SlotBookingRow>();
+
+  if (!newSlot) {
+    return c.json({ success: false, error: 'El nuevo turno no existe' }, 404);
+  }
+  if (!newSlot.available || newSlot.booking_id !== null) {
+    return c.json({ success: false, error: 'Este turno ya no está disponible, por favor elegí otro' }, 409);
+  }
+
+  // 3. Check for conflicts with patient's other bookings (excluding the one being rescheduled)
+  const conflict = await c.env.DB.prepare(
+    `SELECT b.id FROM bookings b
+     JOIN slots s ON b.slot_id = s.id
+     WHERE b.patient_email = ? AND s.date = ? AND b.id != ?
+     AND NOT (s.end_time <= ? OR s.start_time >= ?)`,
+  )
+    .bind(email, newSlot.date, id, newSlot.start_time, newSlot.end_time)
+    .first();
+
+  if (conflict) {
+    return c.json({ success: false, error: 'Ya tenés una reserva en ese horario' }, 409);
+  }
+
+  // 4. Atomic swap in D1 batch
+  // New booking will have recurring_booking_id = NULL if it was a recurring instance
+  try {
+    const results = await c.env.DB.batch([
+      // Free old slot
+      c.env.DB.prepare('UPDATE slots SET available = 1 WHERE id = ?').bind(oldBooking.slot_id),
+      // Delete old booking
+      c.env.DB.prepare('DELETE FROM bookings WHERE id = ?').bind(id),
+      // Book new slot (with race condition check)
+      c.env.DB.prepare('UPDATE slots SET available = 0 WHERE id = ? AND available = 1').bind(new_slot_id),
+      // Create new booking (recurring_booking_id is NULL by default in this query)
+      c.env.DB.prepare(
+        'INSERT INTO bookings (slot_id, patient_name, patient_email, patient_phone, recurring_booking_id) VALUES (?, ?, ?, ?, NULL)',
+      ).bind(new_slot_id, oldBooking.patient_name, email, phone),
+    ]);
+
+    if (results[2].meta.changes === 0) {
+      return c.json({ success: false, error: 'Este turno ya no está disponible, por favor elegí otro' }, 409);
+    }
+
+    const newBookingId = results[3].meta.last_row_id;
+    return c.json({
+      success: true,
+      data: {
+        id: newBookingId,
+        slot: { date: newSlot.date, start_time: newSlot.start_time, end_time: newSlot.end_time },
+      }
+    });
+  } catch (e) {
+    return c.json({ success: false, error: 'Error al reprogramar el turno' }, 500);
+  }
 });
 
 // DELETE /api/bookings/:id  — public, requires email+phone verification
@@ -201,18 +296,10 @@ bookingsRouter.delete('/:id', async (c) => {
     return c.json({ success: false, error: 'Datos de verificación incorrectos' }, 403);
   }
 
-  // Enforce 24h cancellation policy
-  const appointmentDate = new Date(`${booking.date}T${booking.start_time}:00Z`);
-  const hoursUntil = (appointmentDate.getTime() - Date.now()) / (1000 * 3600);
-  if (hoursUntil < 24) {
-    return c.json(
-      {
-        success: false,
-        error: 'Las cancelaciones deben realizarse con al menos 24 horas de anticipación',
-      },
-      400,
-    );
-  }
+  /* 
+     REMOVED 24h RESTRICTION per requirements:
+     "No 24h restriction — patient can cancel at any time"
+  */
 
   // Delete booking and restore slot
   await c.env.DB.batch([

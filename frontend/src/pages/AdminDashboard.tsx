@@ -12,8 +12,13 @@ import {
   getProfile,
   updateProfile,
   createBooking,
+  getSchedule,
+  updateSchedule,
+  getHolidays,
+  addHolidayOverride,
+  removeHolidayOverride,
 } from '../lib/api';
-import type { Psychologist, SlotWithBooking, BookingWithSlot, RecurringBooking } from '../lib/types';
+import type { Psychologist, SlotWithBooking, BookingWithSlot, RecurringBooking, WeeklyDaySchedule, Holiday } from '../lib/types';
 
 type Tab = 'agenda' | 'create' | 'bookings' | 'recurring' | 'settings';
 
@@ -59,6 +64,9 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [loadingRecurring, setLoadingRecurring] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [slotToDelete, setSlotToDelete] = useState<number | null>(null);
   const [recurringForm, setRecurringForm] = useState({
     patient_name: '',
     patient_email: '',
@@ -74,6 +82,13 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [settingsError, setSettingsError] = useState('');
 
+  const [schedule, setSchedule] = useState<WeeklyDaySchedule[]>([]);
+  const [scheduleSuccess, setScheduleSuccess] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
+
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [holidaysYear, setHolidaysYear] = useState<number>(new Date().getFullYear());
+
   const [blockModalOpen, setBlockModalOpen] = useState(false);
   const [selectedSlotForBlock, setSelectedSlotForBlock] = useState<SlotWithBooking | null>(null);
   const [assignForm, setAssignForm] = useState({ patient_name: '', patient_email: '', patient_phone: '' });
@@ -83,13 +98,19 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
   const weekStart = toDateStr(weekDates[0]);
   const weekEnd = toDateStr(weekDates[6]);
 
-  const loadSlots = useCallback(async () => {
+  const loadSlots = useCallback(async (dates: string[]) => {
     setLoadingSlots(true);
-    const res = await getAllSlots();
+    // Fetch slots for all requested dates concurrently
+    const promises = dates.map(date => getAllSlots({ date }));
+    const results = await Promise.all(promises);
     setLoadingSlots(false);
-    if (res.success && res.data) {
-      setSlots(res.data);
-    }
+
+    // Filter successful responses and flatten into a single array
+    const allFetchedSlots = results
+      .filter(res => res.success && res.data)
+      .flatMap(res => res.data as SlotWithBooking[]);
+
+    setSlots(allFetchedSlots);
   }, []);
 
   const loadBookings = useCallback(async () => {
@@ -110,9 +131,35 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
     }
   }, []);
 
+  // Need to use weekDates safely in effects without trigger loops
+  const weekDatesStr = weekDates.map(toDateStr).join(',');
+
   useEffect(() => {
-    loadSlots();
-  }, [loadSlots]);
+    if (tab === 'agenda') {
+      loadSlots(weekDatesStr.split(','));
+    }
+  }, [tab, weekDatesStr, loadSlots]);
+
+  const loadScheduleData = useCallback(async () => {
+    const res = await getSchedule();
+    if (res.success && res.data) {
+      if (res.data.length > 0) {
+        setSchedule(res.data);
+      } else {
+        // Initialize default empty schedule
+        setSchedule(Array.from({ length: 7 }, (_, i) => ({
+          day_of_week: i, start_time: '09:00', end_time: '18:00', active: 0
+        })));
+      }
+    }
+  }, []);
+
+  const loadHolidaysData = useCallback(async (year: number) => {
+    const res = await getHolidays(year);
+    if (res.success && res.data) {
+      setHolidays(res.data);
+    }
+  }, []);
 
   useEffect(() => {
     if (tab === 'bookings') loadBookings();
@@ -123,8 +170,10 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
           setSessionDuration(res.data.session_duration_minutes);
         }
       });
+      loadScheduleData();
+      loadHolidaysData(holidaysYear);
     }
-  }, [tab, loadBookings, loadRecurring]);
+  }, [tab, loadBookings, loadRecurring, loadScheduleData, loadHolidaysData, holidaysYear]);
 
   const handleLogout = async () => {
     await apiLogout();
@@ -135,6 +184,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
 
   const handleToggleBlock = async (slot: SlotWithBooking) => {
     setActionError('');
+    setActionSuccess('');
     const newAvailable = slot.available === 1 ? 0 : 1;
     const res = await updateSlot(slot.id, newAvailable as 0 | 1);
     if (res.success) {
@@ -146,11 +196,24 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
     }
   };
 
-  const handleDelete = async (slotId: number) => {
+  const requestDelete = (slotId: number) => {
+    setSlotToDelete(slotId);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (slotToDelete === null) return;
+    const slotId = slotToDelete;
+    setDeleteModalOpen(false);
+    setSlotToDelete(null);
+
     setActionError('');
+    setActionSuccess('');
     const res = await deleteSlot(slotId);
     if (res.success) {
       setSlots((prev) => prev.filter((s) => s.id !== slotId));
+      setActionSuccess('Turno borrado correctamente.');
+      setTimeout(() => setActionSuccess(''), 3000);
     } else {
       setActionError(res.error ?? 'Error al eliminar el turno');
     }
@@ -188,7 +251,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
 
     if (res.success) {
       setBlockModalOpen(false);
-      loadSlots(); // Refresh slots to show new booking
+      loadSlots(weekDates.map(toDateStr)); // Refresh slots to show new booking
     } else {
       setAssignFormError(res.error ?? 'Error al asignar paciente');
     }
@@ -204,6 +267,34 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
     } else {
       setSettingsError(res.error ?? 'Error al actualizar configuración');
     }
+  };
+
+  const handleSaveSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setScheduleError('');
+    setScheduleSuccess('');
+    const res = await updateSchedule(schedule);
+    if (res.success) {
+      setScheduleSuccess('Horario semanal guardado correctamente.');
+    } else {
+      setScheduleError(res.error ?? 'Error al guardar horario');
+    }
+  };
+
+  const handleCopySchedule = () => {
+    // Find first active day
+    const firstActive = schedule.find(s => s.active === 1);
+    if (!firstActive) return;
+    setSchedule(prev => prev.map(s => s.active === 1 ? { ...s, start_time: firstActive.start_time, end_time: firstActive.end_time } : s));
+  };
+
+  const handleToggleHoliday = async (hol: Holiday) => {
+    if (hol.overridden) {
+      await removeHolidayOverride(hol.date);
+    } else {
+      await addHolidayOverride(hol.date);
+    }
+    loadHolidaysData(holidaysYear);
   };
 
   const handleCreateRecurring = async (e: React.FormEvent) => {
@@ -227,7 +318,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
         frequency_weeks: 1,
       });
       loadRecurring();
-      loadSlots();
+      loadSlots(weekDates.map(toDateStr));
     } else {
       setRecurringFormError(res.error ?? 'Error al crear la recurrencia');
     }
@@ -237,7 +328,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
     const res = await cancelRecurring(id);
     if (res.success) {
       setRecurrings((prev) => prev.filter((r) => r.id !== id));
-      loadSlots();
+      loadSlots(weekDates.map(toDateStr));
     } else {
       setRecurringFormError(res.error ?? 'Error al cancelar la recurrencia');
     }
@@ -415,7 +506,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                                 )}
                                 {!isBooked && (
                                   <button
-                                    onClick={() => handleDelete(slot.id)}
+                                    onClick={() => requestDelete(slot.id)}
                                     className="text-xs underline opacity-70 hover:opacity-100 text-red-500"
                                   >
                                     Borrar
@@ -619,7 +710,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
         {/* ── CREATE TAB ─────────────────────────────────── */}
         {tab === 'create' && (
           <div className="max-w-lg">
-            <SlotForm onCreated={loadSlots} sessionDuration={sessionDuration} />
+            <SlotForm onCreated={() => loadSlots(weekDates.map(toDateStr))} sessionDuration={sessionDuration} />
           </div>
         )}
 
@@ -675,40 +766,156 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
 
         {/* ── SETTINGS TAB ───────────────────────────────── */}
         {tab === 'settings' && (
-          <div className="max-w-lg">
-            <h2 className="text-lg font-bold text-gray-800 mb-4">Configuración de Agenda</h2>
-            <form onSubmit={handleSaveSettings} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Duración de la sesión (minutos)</label>
-                <select
-                  value={sessionDuration}
-                  onChange={(e) => setSessionDuration(Number(e.target.value))}
-                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          <div className="max-w-4xl space-y-8">
+            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+              <h2 className="text-lg font-bold text-gray-800 mb-4">Configuración de Agenda</h2>
+              <form onSubmit={handleSaveSettings} className="space-y-4 max-w-lg">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Duración de la sesión (minutos)</label>
+                  <select
+                    value={sessionDuration}
+                    onChange={(e) => setSessionDuration(Number(e.target.value))}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value={30}>30 minutos</option>
+                    <option value={45}>45 minutos</option>
+                    <option value={50}>50 minutos</option>
+                    <option value={60}>60 minutos (1 hora)</option>
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">Esta duración se usará al crear nuevos turnos y recurrencias.</p>
+                </div>
+                {settingsError && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    {settingsError}
+                  </p>
+                )}
+                {settingsSuccess && (
+                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+                    {settingsSuccess}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  className="w-full bg-blue-600 text-white rounded-xl py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
                 >
-                  <option value={30}>30 minutos</option>
-                  <option value={45}>45 minutos</option>
-                  <option value={50}>50 minutos</option>
-                  <option value={60}>60 minutos (1 hora)</option>
-                </select>
-                <p className="mt-1 text-xs text-gray-500">Esta duración se usará al crear nuevos turnos y recurrencias.</p>
+                  Guardar configuración
+                </button>
+              </form>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-gray-800">Horario semanal</h2>
+                <button type="button" onClick={handleCopySchedule} className="text-sm text-blue-600 hover:underline">
+                  Copiar a todos los días
+                </button>
               </div>
-              {settingsError && (
-                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                  {settingsError}
-                </p>
-              )}
-              {settingsSuccess && (
-                <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
-                  {settingsSuccess}
-                </p>
-              )}
-              <button
-                type="submit"
-                className="w-full bg-blue-600 text-white rounded-xl py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
-              >
-                Guardar configuración
-              </button>
-            </form>
+              <p className="text-sm text-gray-500 mb-6">Definí tus horas de trabajo. Los turnos se generarán automáticamente en estos rangos para cada día.</p>
+
+              <form onSubmit={handleSaveSchedule} className="space-y-6">
+                <div className="space-y-3">
+                  {['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'].map((dayName, index) => {
+                    const daySch = schedule.find(s => s.day_of_week === index);
+                    if (!daySch) return null;
+
+                    return (
+                      <div key={index} className={`flex items-center gap-4 p-3 rounded-xl border transition-colors ${daySch.active === 1 ? 'border-blue-100 bg-blue-50/30' : 'border-gray-100 bg-gray-50'}`}>
+                        <div className="flex items-center gap-3 w-32">
+                          <input
+                            type="checkbox"
+                            checked={daySch.active === 1}
+                            onChange={(e) => setSchedule(prev => prev.map(s => s.day_of_week === index ? { ...s, active: e.target.checked ? 1 : 0 } : s))}
+                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                          />
+                          <span className={`text-sm font-medium ${daySch.active === 1 ? 'text-gray-800' : 'text-gray-400'}`}>{dayName}</span>
+                        </div>
+
+                        {daySch.active === 1 ? (
+                          <div className="flex items-center gap-3 flex-1">
+                            <input
+                              type="time"
+                              required
+                              value={daySch.start_time}
+                              onChange={(e) => setSchedule(prev => prev.map(s => s.day_of_week === index ? { ...s, start_time: e.target.value } : s))}
+                              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <span className="text-gray-400 text-sm">-</span>
+                            <input
+                              type="time"
+                              required
+                              value={daySch.end_time}
+                              onChange={(e) => setSchedule(prev => prev.map(s => s.day_of_week === index ? { ...s, end_time: e.target.value } : s))}
+                              className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex-1 text-sm text-gray-400">No disponible</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {scheduleError && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2 max-w-lg">
+                    {scheduleError}
+                  </p>
+                )}
+                {scheduleSuccess && (
+                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2 max-w-lg">
+                    {scheduleSuccess}
+                  </p>
+                )}
+                <div className="max-w-lg">
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors"
+                  >
+                    Guardar horario
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-gray-800">Feriados argentinos</h2>
+                <select
+                  value={holidaysYear}
+                  onChange={(e) => setHolidaysYear(Number(e.target.value))}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={new Date().getFullYear() - 1}>{new Date().getFullYear() - 1}</option>
+                  <option value={new Date().getFullYear()}>{new Date().getFullYear()}</option>
+                  <option value={new Date().getFullYear() + 1}>{new Date().getFullYear() + 1}</option>
+                </select>
+              </div>
+              <p className="text-sm text-gray-500 mb-6">Por defecto, no se generarán turnos automáticos en días feriados. Podés marcar un feriado como laborable excepcionalmente.</p>
+
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+                {holidays.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-4">No se pudieron cargar los feriados para {holidaysYear}</p>
+                ) : (
+                  holidays.map(hol => (
+                    <div key={hol.date} className="flex justify-between items-center p-3 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors">
+                      <div>
+                        <p className="text-sm font-bold text-gray-800 capitalize">{formatDate(hol.date)}</p>
+                        <p className="text-xs text-gray-500">{hol.localName}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium ${hol.overridden ? 'text-green-600' : 'text-gray-400'}`}>
+                          {hol.overridden ? 'Se trabaja' : 'No laborable'}
+                        </span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" className="sr-only peer" checked={hol.overridden} onChange={() => handleToggleHoliday(hol)} />
+                          <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                        </label>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
       </main>
@@ -790,6 +997,51 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                     Asignar
                   </button>
                 </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {actionSuccess && (
+        <div className="fixed bottom-6 right-6 bg-gray-900 text-white px-5 py-3 rounded-2xl shadow-xl font-medium flex items-center gap-3 z-50 transition-all duration-300">
+          <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          {actionSuccess}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-gray-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden transform transition-all">
+            <div className="p-6">
+              <div className="w-14 h-14 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-5 mx-auto">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-center text-gray-900 mb-2">¿Borrar este turno?</h3>
+              <p className="text-sm text-center text-gray-500 mb-6 px-2">
+                Esta acción no se puede deshacer. El turno será eliminado de la agenda permanentemente.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setDeleteModalOpen(false); setSlotToDelete(null); }}
+                  className="flex-1 px-4 py-2.5 bg-gray-50 text-gray-700 font-bold rounded-xl hover:bg-gray-100 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmDelete}
+                  className="flex-1 px-4 py-2.5 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600 transition-colors shadow-sm shadow-red-500/30"
+                >
+                  Sí, borrar
+                </button>
               </div>
             </div>
           </div>
