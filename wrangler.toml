@@ -1,0 +1,10 @@
+name = "turnospsi-worker"
+main = "worker/src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "turnos-psicologos"
+database_id = "32e360b3-ef70-4858-a0b6-a31983298932"
+
+[vars]
