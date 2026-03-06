@@ -51,4 +51,5 @@ export interface Psychologist {
   id: number;
   name: string;
   email: string;
+  session_duration_minutes: number;
 }

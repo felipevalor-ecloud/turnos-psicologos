@@ -9,10 +9,13 @@ import {
   getRecurring,
   createRecurring,
   cancelRecurring,
+  getProfile,
+  updateProfile,
+  createBooking,
 } from '../lib/api';
 import type { Psychologist, SlotWithBooking, BookingWithSlot, RecurringBooking } from '../lib/types';
 
-type Tab = 'agenda' | 'create' | 'bookings' | 'recurring';
+type Tab = 'agenda' | 'create' | 'bookings' | 'recurring' | 'settings';
 
 function formatDate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -67,6 +70,15 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
   const [recurringFormError, setRecurringFormError] = useState('');
   const [recurringFormSuccess, setRecurringFormSuccess] = useState('');
 
+  const [sessionDuration, setSessionDuration] = useState<number>(psychologist.session_duration_minutes || 45);
+  const [settingsSuccess, setSettingsSuccess] = useState('');
+  const [settingsError, setSettingsError] = useState('');
+
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+  const [selectedSlotForBlock, setSelectedSlotForBlock] = useState<SlotWithBooking | null>(null);
+  const [assignForm, setAssignForm] = useState({ patient_name: '', patient_email: '', patient_phone: '' });
+  const [assignFormError, setAssignFormError] = useState('');
+
   const weekDates = getWeekDates(weekRef);
   const weekStart = toDateStr(weekDates[0]);
   const weekEnd = toDateStr(weekDates[6]);
@@ -105,6 +117,13 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
   useEffect(() => {
     if (tab === 'bookings') loadBookings();
     if (tab === 'recurring') loadRecurring();
+    if (tab === 'settings') {
+      getProfile().then(res => {
+        if (res.success && res.data) {
+          setSessionDuration(res.data.session_duration_minutes);
+        }
+      });
+    }
   }, [tab, loadBookings, loadRecurring]);
 
   const handleLogout = async () => {
@@ -134,6 +153,56 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
       setSlots((prev) => prev.filter((s) => s.id !== slotId));
     } else {
       setActionError(res.error ?? 'Error al eliminar el turno');
+    }
+  };
+
+  const openBlockModal = (slot: SlotWithBooking) => {
+    if (slot.available === 0) {
+      // If it's already blocked, just unlock it immediately
+      handleToggleBlock(slot);
+    } else {
+      // It's available, so open modal to block or assign
+      setSelectedSlotForBlock(slot);
+      setAssignForm({ patient_name: '', patient_email: '', patient_phone: '' });
+      setAssignFormError('');
+      setBlockModalOpen(true);
+    }
+  };
+
+  const handleSimpleBlock = async () => {
+    if (!selectedSlotForBlock) return;
+    await handleToggleBlock(selectedSlotForBlock);
+    setBlockModalOpen(false);
+  };
+
+  const handleAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSlotForBlock) return;
+    setAssignFormError('');
+
+    // Attempt to book it directly, using our new admin bypass in the backend
+    const res = await createBooking({
+      slot_id: selectedSlotForBlock.id,
+      ...assignForm,
+    });
+
+    if (res.success) {
+      setBlockModalOpen(false);
+      loadSlots(); // Refresh slots to show new booking
+    } else {
+      setAssignFormError(res.error ?? 'Error al asignar paciente');
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingsError('');
+    setSettingsSuccess('');
+    const res = await updateProfile({ session_duration_minutes: sessionDuration });
+    if (res.success) {
+      setSettingsSuccess('Duración de sesión actualizada correctamente.');
+    } else {
+      setSettingsError(res.error ?? 'Error al actualizar configuración');
     }
   };
 
@@ -228,16 +297,16 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                 { id: 'create', label: 'Crear turnos' },
                 { id: 'bookings', label: 'Reservas' },
                 { id: 'recurring', label: 'Recurrencias' },
+                { id: 'settings', label: 'Configuración' },
               ] as { id: Tab; label: string }[]
             ).map(({ id, label }) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
-                className={`py-3 text-sm font-medium border-b-2 transition-colors ${
-                  tab === id
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                className={`py-3 text-sm font-medium border-b-2 transition-colors ${tab === id
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
               >
                 {label}
               </button>
@@ -303,9 +372,8 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                   return (
                     <div key={ds} className="min-h-32">
                       <div
-                        className={`text-center py-1 px-1 rounded-lg text-xs font-medium mb-1 ${
-                          isToday ? 'bg-blue-600 text-white' : 'text-gray-500'
-                        }`}
+                        className={`text-center py-1 px-1 rounded-lg text-xs font-medium mb-1 ${isToday ? 'bg-blue-600 text-white' : 'text-gray-500'
+                          }`}
                       >
                         {formatDate(ds)}
                       </div>
@@ -317,13 +385,12 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                           return (
                             <div
                               key={slot.id}
-                              className={`rounded-lg px-1.5 py-1 text-xs border ${
-                                isBooked
-                                  ? 'bg-red-50 border-red-200 text-red-700'
-                                  : isBlocked
+                              className={`rounded-lg px-1.5 py-1 text-xs border ${isBooked
+                                ? 'bg-red-50 border-red-200 text-red-700'
+                                : isBlocked
                                   ? 'bg-gray-100 border-gray-300 text-gray-500'
                                   : 'bg-green-50 border-green-200 text-green-700'
-                              }`}
+                                }`}
                             >
                               <div className="font-medium flex items-center gap-1">
                                 {slot.start_time}
@@ -340,7 +407,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
                               <div className="flex gap-1 mt-1">
                                 {!isBooked && (
                                   <button
-                                    onClick={() => handleToggleBlock(slot)}
+                                    onClick={() => openBlockModal(slot)}
                                     className="text-xs underline opacity-70 hover:opacity-100"
                                   >
                                     {isBlocked ? 'Liberar' : 'Bloquear'}
@@ -552,7 +619,7 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
         {/* ── CREATE TAB ─────────────────────────────────── */}
         {tab === 'create' && (
           <div className="max-w-lg">
-            <SlotForm onCreated={loadSlots} />
+            <SlotForm onCreated={loadSlots} sessionDuration={sessionDuration} />
           </div>
         )}
 
@@ -605,7 +672,129 @@ export function AdminDashboard({ psychologist, onLogout }: Props) {
             )}
           </div>
         )}
+
+        {/* ── SETTINGS TAB ───────────────────────────────── */}
+        {tab === 'settings' && (
+          <div className="max-w-lg">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Configuración de Agenda</h2>
+            <form onSubmit={handleSaveSettings} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Duración de la sesión (minutos)</label>
+                <select
+                  value={sessionDuration}
+                  onChange={(e) => setSessionDuration(Number(e.target.value))}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={30}>30 minutos</option>
+                  <option value={45}>45 minutos</option>
+                  <option value={50}>50 minutos</option>
+                  <option value={60}>60 minutos (1 hora)</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">Esta duración se usará al crear nuevos turnos y recurrencias.</p>
+              </div>
+              {settingsError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  {settingsError}
+                </p>
+              )}
+              {settingsSuccess && (
+                <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+                  {settingsSuccess}
+                </p>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-blue-600 text-white rounded-xl py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                Guardar configuración
+              </button>
+            </form>
+          </div>
+        )}
       </main>
+
+      {/* BLOCK / ASSIGN MODAL */}
+      {blockModalOpen && selectedSlotForBlock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">Gestionar Turno: {formatDate(selectedSlotForBlock.date)} {selectedSlotForBlock.start_time}</h3>
+              <button
+                onClick={() => setBlockModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100"
+              >
+                X
+              </button>
+            </div>
+
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+              {/* Option A */}
+              <div className="flex flex-col">
+                <h4 className="font-bold text-gray-800 mb-2">Bloquear turno</h4>
+                <p className="text-sm text-gray-500 mb-6 flex-1">
+                  El psicólogo no está disponible en este horario. Nadie podrá reservar este turno.
+                </p>
+                <button
+                  onClick={handleSimpleBlock}
+                  className="w-full bg-gray-100 text-gray-800 rounded-xl py-2 px-4 text-sm font-medium hover:bg-gray-200 transition-colors"
+                >
+                  Bloquear
+                </button>
+              </div>
+
+              {/* Option B */}
+              <div className="flex flex-col pt-6 md:pt-0 md:pl-8">
+                <h4 className="font-bold text-gray-800 mb-2">Asignar paciente</h4>
+                <p className="text-sm text-gray-500 mb-4">
+                  Registrá un paciente que ya coordinó por WhatsApp u otro medio.
+                </p>
+
+                <form onSubmit={handleAssignSubmit} className="space-y-4">
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Nombre completo"
+                      value={assignForm.patient_name}
+                      onChange={e => setAssignForm(f => ({ ...f, patient_name: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="email"
+                      required
+                      placeholder="Email (ej: juan@email.com)"
+                      value={assignForm.patient_email}
+                      onChange={e => setAssignForm(f => ({ ...f, patient_email: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Teléfono (+549...)"
+                      value={assignForm.patient_phone}
+                      onChange={e => setAssignForm(f => ({ ...f, patient_phone: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  {assignFormError && (
+                    <p className="text-xs text-red-600 mt-2">{assignFormError}</p>
+                  )}
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-600 text-white rounded-xl py-2 px-4 text-sm font-medium hover:bg-blue-700 transition-colors mt-2"
+                  >
+                    Asignar
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

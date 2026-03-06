@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS psychologists (
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  session_duration_minutes INTEGER DEFAULT 45,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -5,9 +5,10 @@ const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 interface Props {
   onCreated: () => void;
+  sessionDuration: number;
 }
 
-export function SlotForm({ onCreated }: Props) {
+export function SlotForm({ onCreated, sessionDuration }: Props) {
   const [mode, setMode] = useState<'single' | 'batch'>('single');
 
   // Single slot
@@ -85,21 +86,19 @@ export function SlotForm({ onCreated }: Props) {
       <div className="flex gap-2 mb-5">
         <button
           onClick={() => setMode('single')}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-            mode === 'single'
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === 'single'
               ? 'bg-blue-600 text-white'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
+            }`}
         >
           Turno individual
         </button>
         <button
           onClick={() => setMode('batch')}
-          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-            mode === 'batch'
+          className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${mode === 'batch'
               ? 'bg-blue-600 text-white'
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
+            }`}
         >
           Turnos en lote
         </button>
@@ -127,7 +126,7 @@ export function SlotForm({ onCreated }: Props) {
               onChange={(e) => setSingleTime(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <p className="text-xs text-gray-400 mt-1">La duración es de 50 minutos.</p>
+            <p className="text-xs text-gray-400 mt-1">La duración es de {sessionDuration} minutos.</p>
           </div>
           <button
             type="submit"
@@ -185,11 +184,10 @@ export function SlotForm({ onCreated }: Props) {
                   key={i}
                   type="button"
                   onClick={() => toggleDay(i)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    selectedDays.includes(i)
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedDays.includes(i)
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
+                    }`}
                 >
                   {name}
                 </button>
@@ -209,11 +207,10 @@ export function SlotForm({ onCreated }: Props) {
 
       {message && (
         <div
-          className={`mt-4 p-3 rounded-lg text-sm ${
-            message.type === 'success'
+          className={`mt-4 p-3 rounded-lg text-sm ${message.type === 'success'
               ? 'bg-green-50 text-green-700 border border-green-200'
               : 'bg-red-50 text-red-600 border border-red-200'
-          }`}
+            }`}
         >
           {message.text}
         </div>

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { authMiddleware } from '../middleware/auth';
+import { verifyJWT } from '../lib/jwt';
 import type { Env, AppVariables } from '../types';
 
 type SlotBookingRow = {
@@ -85,18 +86,30 @@ bookingsRouter.post('/', async (c) => {
     return c.json({ success: false, error: 'El turno no está disponible' }, 409);
   }
 
-  // Check patient doesn't have an overlapping booking on the same date
-  const overlap = await c.env.DB.prepare(
-    `SELECT b.id FROM bookings b
-     JOIN slots s ON b.slot_id = s.id
-     WHERE b.patient_email = ? AND s.date = ?
-     AND NOT (s.end_time <= ? OR s.start_time >= ?)`,
-  )
-    .bind(patient_email, slot.date, slot.start_time, slot.end_time)
-    .first();
+  let isPsychologist = false;
+  const authHeader = c.req.header('Authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    const payload = await verifyJWT(token, c.env.JWT_SECRET);
+    if (payload) {
+      isPsychologist = true;
+    }
+  }
 
-  if (overlap) {
-    return c.json({ success: false, error: 'Ya tenés una reserva en ese horario' }, 409);
+  // Check patient doesn't have an overlapping booking on the same date (unless admin)
+  if (!isPsychologist) {
+    const overlap = await c.env.DB.prepare(
+      `SELECT b.id FROM bookings b
+       JOIN slots s ON b.slot_id = s.id
+       WHERE b.patient_email = ? AND s.date = ?
+       AND NOT (s.end_time <= ? OR s.start_time >= ?)`
+    )
+      .bind(patient_email, slot.date, slot.start_time, slot.end_time)
+      .first();
+
+    if (overlap) {
+      return c.json({ success: false, error: 'Ya tenés una reserva en ese horario' }, 409);
+    }
   }
 
   // Atomically set available=0 and insert booking using D1 batch

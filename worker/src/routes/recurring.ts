@@ -17,6 +17,7 @@ type RecurringRow = {
 };
 type MaxDateRow = { max_date: string | null };
 type SlotIdRow = { id: number };
+type ConfigRow = { session_duration_minutes: number };
 
 function addMinutes(time: string, minutes: number): string {
   const [h, m] = time.split(':').map(Number);
@@ -60,6 +61,7 @@ async function generateSlots(
     patientName: string;
     patientEmail: string;
     patientPhone: string;
+    sessionDuration: number;
   },
 ): Promise<{ created: number; skipped: number }> {
   const {
@@ -72,9 +74,10 @@ async function generateSlots(
     patientName,
     patientEmail,
     patientPhone,
+    sessionDuration,
   } = params;
 
-  const end_time = addMinutes(time, 50);
+  const end_time = addMinutes(time, sessionDuration);
   let created = 0;
   let skipped = 0;
   let current = fromDate;
@@ -182,6 +185,11 @@ recurringRouter.post('/', authMiddleware, async (c) => {
   const recurringId = recurringResult.meta.last_row_id;
   const toDate = addMonths(todayStr(), 3);
 
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+    .bind(psychologistId)
+    .first<ConfigRow>();
+  const sessionDuration = config?.session_duration_minutes ?? 45;
+
   const { created, skipped } = await generateSlots(c.env.DB, {
     recurringId,
     psychologistId,
@@ -192,6 +200,7 @@ recurringRouter.post('/', authMiddleware, async (c) => {
     patientName: patient_name,
     patientEmail: patient_email,
     patientPhone: patient_phone,
+    sessionDuration,
   });
 
   const record = await c.env.DB.prepare('SELECT * FROM recurring_bookings WHERE id = ?')
@@ -284,6 +293,11 @@ recurringRouter.post('/extend', authMiddleware, async (c) => {
     .bind(psychologistId)
     .all<RecurringRow & { last_generated: string | null }>();
 
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+    .bind(psychologistId)
+    .first<ConfigRow>();
+  const sessionDuration = config?.session_duration_minutes ?? 45;
+
   let totalCreated = 0;
   let totalSkipped = 0;
 
@@ -303,6 +317,7 @@ recurringRouter.post('/extend', authMiddleware, async (c) => {
       patientName: rec.patient_name,
       patientEmail: rec.patient_email,
       patientPhone: rec.patient_phone,
+      sessionDuration,
     });
 
     totalCreated += created;

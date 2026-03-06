@@ -12,6 +12,7 @@ type SlotRow = {
 };
 
 type OverlapRow = { count: number };
+type ConfigRow = { session_duration_minutes: number };
 
 function addMinutes(time: string, minutes: number): string {
   const [h, m] = time.split(':').map(Number);
@@ -117,7 +118,12 @@ slotsRouter.post('/', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'No se puede crear un turno en una fecha pasada' }, 400);
   }
 
-  const end_time = addMinutes(start_time, 50);
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+    .bind(psychologistId)
+    .first<ConfigRow>();
+  const duration = config?.session_duration_minutes ?? 45;
+
+  const end_time = addMinutes(start_time, duration);
 
   const overlap = await c.env.DB.prepare(
     `SELECT COUNT(*) as count FROM slots
@@ -175,7 +181,12 @@ slotsRouter.post('/batch', authMiddleware, async (c) => {
     return c.json({ success: false, error: 'end_date debe ser posterior a start_date' }, 400);
   }
 
-  const end_time = addMinutes(start_time, 50);
+  const config = await c.env.DB.prepare('SELECT session_duration_minutes FROM psychologists WHERE id = ?')
+    .bind(psychologistId)
+    .first<ConfigRow>();
+  const duration = config?.session_duration_minutes ?? 45;
+
+  const end_time = addMinutes(start_time, duration);
   const created: string[] = [];
   const skipped: string[] = [];
 

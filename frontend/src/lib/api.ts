@@ -32,12 +32,20 @@ async function request<T>(
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export const login = (email: string, password: string) =>
-  request<{ token: string; psychologist: { id: number; name: string; email: string } }>(
+  request<{ token: string; psychologist: { id: number; name: string; email: string; session_duration_minutes: number; } }>(
     '/auth/login',
     { method: 'POST', body: JSON.stringify({ email, password }) },
   );
 
 export const apiLogout = () => request('/auth/logout', { method: 'POST' });
+
+export const getProfile = () => request<{ id: number; name: string; email: string; session_duration_minutes: number; }>('/auth/me');
+
+export const updateProfile = (data: { session_duration_minutes: number }) =>
+  request<{ id: number; name: string; email: string; session_duration_minutes: number; }>('/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
 
 // ── Slots (public) ────────────────────────────────────────────────────────────
 
