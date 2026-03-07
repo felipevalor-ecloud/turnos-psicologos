@@ -4,6 +4,10 @@ export type ApiResponse<T = void> = {
   success: boolean;
   data?: T;
   error?: string;
+  warning?: string;
+  policy_hours?: number;
+  whatsapp_number?: string | null;
+  psychologist_name?: string;
 };
 
 const API_BASE: string = import.meta.env.VITE_API_URL ?? '';
@@ -29,10 +33,15 @@ async function request<T>(
   }
 }
 
+// ── Public ───────────────────────────────────────────────────────────────────
+
+export const getContact = () =>
+  request<{ nombre: string; whatsapp_number: string | null }>('/contact');
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 export const login = (email: string, password: string) =>
-  request<{ token: string; psychologist: { id: number; name: string; email: string; session_duration_minutes: number; } }>(
+  request<{ token: string; psychologist: import('./types').Psychologist }>(
     '/auth/login',
     { method: 'POST', body: JSON.stringify({ email, password }) },
   );
@@ -41,12 +50,18 @@ export const apiLogout = () => request('/auth/logout', { method: 'POST' });
 
 // ── Profile & Auth ────────────────────────────────────────────────────────────
 
-export const getProfile = () => request<{ id: number; name: string; email: string; session_duration_minutes: number; }>('/auth/me');
+export const getProfile = () => request<import('./types').Psychologist>('/auth/me');
 
-export const updateProfile = (data: { session_duration_minutes: number }) =>
-  request<{ id: number; name: string; email: string; session_duration_minutes: number; }>('/auth/me', {
+export const updateProfile = (data: {
+  session_duration_minutes?: number;
+  cancel_min_hours?: number;
+  reschedule_min_hours?: number;
+  booking_min_hours?: number;
+  whatsapp_number?: string | null;
+}) =>
+  request<import('./types').Psychologist>('/auth/me', {
     method: 'PATCH',
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
   });
 
 // ── Schedule & Holidays ───────────────────────────────────────────────────────
@@ -118,13 +133,13 @@ export const searchMyBookings = (email: string, phone: string) =>
     body: JSON.stringify({ email, phone }),
   });
 
-export const cancelBooking = (id: number, email: string, phone: string) =>
+export const cancelBooking = (id: number, email?: string, phone?: string) =>
   request(`/bookings/${id}`, {
     method: 'DELETE',
     body: JSON.stringify({ email, phone }),
   });
 
-export const rescheduleBooking = (id: number, data: { email: string; phone: string; new_slot_id: number }) =>
+export const rescheduleBooking = (id: number, data: { email?: string; phone?: string; new_slot_id: number }) =>
   request<BookingResult>(`/bookings/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
@@ -154,10 +169,10 @@ export const createRecurring = (data: {
 export const cancelRecurring = (id: number, email?: string, phone?: string) =>
   request<{ slots_deleted: number }>(`/recurring/${id}`, {
     method: 'DELETE',
-    body: email && phone ? JSON.stringify({ email, phone }) : undefined,
+    body: (email || phone) ? JSON.stringify({ email, phone }) : undefined,
   });
 
-export const rescheduleRecurring = (id: number, data: { email: string; phone: string; from_date: string; new_time: string }) =>
+export const rescheduleRecurring = (id: number, data: { email?: string; phone?: string; from_date: string; new_time: string }) =>
   request<{ rescheduled_count: number }>(`/recurring/${id}/reschedule-from`, {
     method: 'PATCH',
     body: JSON.stringify(data),

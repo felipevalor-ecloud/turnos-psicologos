@@ -53,6 +53,10 @@ export interface Psychologist {
   name: string;
   email: string;
   session_duration_minutes: number;
+  cancel_min_hours: number;
+  reschedule_min_hours: number;
+  booking_min_hours: number;
+  whatsapp_number: string | null;
 }
 
 export interface WeeklyDaySchedule {

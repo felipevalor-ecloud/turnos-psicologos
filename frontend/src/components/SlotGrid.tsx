@@ -1,3 +1,4 @@
+import { SlotChip } from './SlotChip';
 import type { Slot } from '../lib/types';
 
 interface Props {
@@ -9,31 +10,27 @@ interface Props {
 export function SlotGrid({ slots, onSelect, loading }: Props) {
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-14 bg-slate-100 rounded-xl animate-pulse" />
+        ))}
       </div>
     );
   }
 
   if (slots.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-400">
-        <p className="text-lg">No hay turnos disponibles para esta fecha.</p>
-        <p className="text-sm mt-1">Seleccioná otra fecha para ver la disponibilidad.</p>
+      <div className="text-center py-10">
+        <p className="text-slate-400 font-medium">Sin turnos disponibles</p>
+        <p className="text-sm text-slate-300 mt-1">Elegí otra fecha</p>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
       {slots.map((slot) => (
-        <button
-          key={slot.id}
-          onClick={() => onSelect(slot)}
-          className="px-3 py-3 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 rounded-xl text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-green-400"
-        >
-          {slot.start_time}
-        </button>
+        <SlotChip key={slot.id} slot={slot} onSelect={onSelect} />
       ))}
     </div>
   );

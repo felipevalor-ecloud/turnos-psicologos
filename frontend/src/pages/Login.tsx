@@ -43,7 +43,7 @@ export function Login({ onLogin }: Props) {
               />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">TurnosPsi</h1>
+          <h1 className="text-2xl font-bold text-gray-800">Turnos Psico</h1>
           <p className="text-sm text-gray-500 mt-1">Panel de administración</p>
         </div>
 
